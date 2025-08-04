@@ -15,35 +15,23 @@ const mainContent = document.querySelector('#main-content') as HTMLDivElement;
 const userInput = document.querySelector('#input') as HTMLTextAreaElement;
 const modelOutput = document.querySelector('#output') as HTMLDivElement;
 const slideshow = document.querySelector('#slideshow') as HTMLDivElement;
+const status = document.querySelector('#status') as HTMLDivElement;
 const error = document.querySelector('#error') as HTMLDivElement;
 
 // --- Globals for AI instances ---
-let ai: GoogleGenAI | null = null;
-let chat: Chat | null = null;
+let textModel: GoogleGenAI | null = null;
+let imageChat: Chat | null = null;
 
-const additionalInstructions = `
-You are a master storyteller and comic artist. Your task is to take a user's story or prompt and turn it into a photorealistic comic strip.
-**CRITICAL INSTRUCTIONS:**
-1.  **Character Consistency:** You MUST maintain the appearance of the main character(s) in every single image. Create a clear mental model of the character(s) based on the story and stick to it. If the story doesn't describe them, create a consistent appearance yourself.
-2.  **Style:** Generate a photorealistic, cinematic image for each panel. The lighting and color palette should be consistent, as if from a single film. The style should be tasteful and artistic.
-3.  **Format:** Break the story down into short, single-sentence panels. For each sentence, first provide the text, then generate the corresponding image.
-4.  **Process:** For each moment: a. Output the sentence as text. b. Output a single, corresponding photorealistic image.
-5.  **No Commentary:** Do not add any extra text, explanations, or commentary. Just the story text and the images. Begin the comic immediately.
-`;
+const imageStylePrompt = "Photorealistic, cinematic lighting, sharp focus, high detail, 8k resolution, shot on 35mm film, tasteful, artistic.";
 
 // --- Initialization Logic ---
-
 async function initializeGenAI(apiKey: string) {
   try {
-    ai = new GoogleGenAI({apiKey});
-
-    chat = ai.chats.create({
-      model: 'gemini-2.0-flash-preview-image-generation',
-      config: {
-        responseModalities: [Modality.TEXT, Modality.IMAGE],
-      },
-      history: [],
-    });
+    const ai = new GoogleGenAI({apiKey});
+    // For scriptwriting, we use a powerful text model with a large context window.
+    textModel = ai.models.create({ model: 'gemini-1.5-pro-latest' });
+    // For image generation, we use the specialized chat model.
+    imageChat = ai.chats.create({ model: 'gemini-2.0-flash-preview-image-generation' });
 
     localStorage.setItem('gemini_api_key', apiKey);
     apiKeyScreen.setAttribute('hidden', 'true');
@@ -51,12 +39,21 @@ async function initializeGenAI(apiKey: string) {
     userInput.focus();
   } catch (e: any) {
     console.error("API Initialization Failed:", e);
-    apiError.textContent = `Initialization failed. Please check your API key and network connection. Error: ${e.message}`;
+    apiError.textContent = `Initialization failed. Please check your API key. Error: ${e.message}`;
     apiError.removeAttribute('hidden');
   }
 }
 
-// --- Main Application Logic ---
+// --- UI Helper Functions ---
+function setStatus(message: string, show: boolean) {
+  status.textContent = message;
+  status.toggleAttribute('hidden', !show);
+}
+
+function setError(message: string, show: boolean) {
+    error.innerHTML = message;
+    error.toggleAttribute('hidden', !show);
+}
 
 async function addSlide(text: string, image: HTMLImageElement) {
   const slide = document.createElement('div');
@@ -66,108 +63,150 @@ async function addSlide(text: string, image: HTMLImageElement) {
   slide.append(image);
   slide.append(caption);
   slideshow.append(slide);
+  slideshow.removeAttribute('hidden');
 }
 
-function parseError(e: any) {
-    return e.toString();
+// --- Core Two-Model Logic ---
+
+interface ComicScript {
+    characterDescription: string;
+    panels: { text: string }[];
 }
 
-async function generate(message: string) {
-  if (!chat || !message.trim()) return;
+// STEP 1: Use the text model to create a structured script.
+async function generateScript(story: string): Promise<ComicScript | null> {
+    if (!textModel) return null;
 
-  userInput.disabled = true;
-  chat.history.length = 0;
-  modelOutput.innerHTML = '';
-  slideshow.innerHTML = '';
-  error.innerHTML = '';
-  error.setAttribute('hidden', 'true');
+    const scriptwriterPrompt = `
+    You are an expert scriptwriter and character designer for a photorealistic graphic novel.
+    Your job is to take a user's story and prepare it for an artist by creating a structured JSON output.
 
-  try {
+    CRITICAL INSTRUCTIONS:
+    1.  **Create a Character Description:** Read the entire story. Create a single, consistent, highly-detailed description of the main character. Include specific details like ethnicity, age, hair style/color, eye color, build, and facial features. If the story lacks details, invent plausible ones. This description MUST be used for every image to ensure consistency.
+    2.  **Break Down Story:** Deconstruct the user's story into short, single-sentence panels. Each panel should represent a distinct visual moment.
+    3.  **JSON Output:** You MUST output ONLY a single JSON object. Do not include any other text, explanations, or markdown formatting like \`\`\`json. The JSON object must have two keys: "characterDescription" (a string) and "panels" (an array of objects, where each object has a "text" key).
+
+    EXAMPLE STORY: "A shy office worker named Sam discovers a hidden box of elegant dresses and tries one on for the first time."
+
+    EXAMPLE JSON OUTPUT:
+    {
+      "characterDescription": "Sam is a 25-year-old male of Caucasian descent with messy, short brown hair, blue eyes, a slim build, and a few light freckles across his nose. He has a gentle and slightly nervous expression.",
+      "panels": [
+        { "text": "In a dimly lit office after hours, Sam cautiously opens a dusty, forgotten cardboard box." },
+        { "text": "His eyes widen as he pulls out a cascade of shimmering, soft red silk fabric." },
+        { "text": "Standing nervously in front of a full-length mirror, he slips the elegant red dress over his shoulders." },
+        { "text": "A look of surprised delight crosses his face as he sees his reflection transformed." }
+      ]
+    }
+
+    USER STORY:
+    ${story}
+    `;
+
+    try {
+        const result = await textModel.generateContent({
+            contents: [{role: 'user', parts: [{text: scriptwriterPrompt}]}],
+            generationConfig: { responseMimeType: "application/json" }
+        });
+        const jsonText = result.response.candidates?.[0].content.parts[0].text;
+        if (!jsonText) throw new Error("Text model returned no response.");
+        return JSON.parse(jsonText) as ComicScript;
+    } catch(e) {
+        console.error("Failed to generate or parse script:", e);
+        setError(`<strong>Scriptwriting Failed:</strong> The AI failed to generate a valid story script. This can happen with complex stories. Please try simplifying your prompt. <br><br><em>Error: ${e}</em>`, true);
+        return null;
+    }
+}
+
+// STEP 2: Loop through the script and generate an image for each panel.
+async function generate(story: string) {
+    if (!textModel || !imageChat || !story.trim()) return;
+
+    // Reset UI
+    userInput.disabled = true;
+    modelOutput.innerHTML = '';
+    slideshow.innerHTML = '';
+    slideshow.setAttribute('hidden', 'true');
+    setError('', false);
+    setStatus('Writing the script...', true);
+    
+    // --- Phase 1: Script Generation ---
+    const script = await generateScript(story);
+
+    if (!script || !script.panels || script.panels.length === 0) {
+        setStatus('', false);
+        userInput.disabled = false;
+        userInput.focus();
+        return;
+    }
+    
     const userTurn = document.createElement('div') as HTMLDivElement;
-    userTurn.innerHTML = await marked.parse(message);
+    userTurn.innerHTML = await marked.parse(story);
     userTurn.className = 'user-turn';
     modelOutput.append(userTurn);
     userInput.value = '';
 
-    const result = await chat.sendMessageStream({
-      message: message + additionalInstructions,
-    });
+    // --- Phase 2: Panel & Image Generation ---
+    let panelCount = 0;
+    for (const panel of script.panels) {
+        panelCount++;
+        setStatus(`Generating panel ${panelCount} of ${script.panels.length}...`, true);
 
-    let text = '';
-    let img: HTMLImageElement | null = null;
-
-    for await (const chunk of result) {
-      for (const candidate of chunk.candidates) {
-        // THE FIX IS HERE: We use 'candidate.content?.parts'
-        // The '?.' safely handles cases where 'candidate.content' is undefined.
-        for (const part of candidate.content?.parts ?? []) {
-          if (part.text) {
-            text += part.text;
-          } else if (part.inlineData) {
-            img = document.createElement('img');
-            img.src = `data:image/png;base64,` + part.inlineData.data;
-          }
-          if (text && img) {
-            await addSlide(text, img);
-            slideshow.removeAttribute('hidden');
-            text = '';
-            img = null;
-          }
+        const imagePrompt = `${panel.text}\n\n**Character:** ${script.characterDescription}\n\n**Style:** ${imageStylePrompt}`;
+        
+        try {
+            const result = await imageChat.sendMessageStream({ message: imagePrompt });
+            let text = '';
+            let img: HTMLImageElement | null = null;
+            
+            for await (const chunk of result) {
+                for (const part of chunk.candidates[0].content?.parts ?? []) {
+                    if (part.text) {
+                        text += part.text;
+                    } else if (part.inlineData) {
+                        img = document.createElement('img');
+                        img.src = `data:image/png;base64,` + part.inlineData.data;
+                    }
+                }
+            }
+            if (img) {
+                await addSlide(panel.text, img);
+            } else {
+                 throw new Error("Image model did not return an image for this panel.");
+            }
+        } catch(e) {
+            console.error(`Failed to generate panel ${panelCount}:`, e);
+            setError(`<strong>Panel ${panelCount} Failed:</strong> Could not generate an image for the text: "${panel.text}" <br><br><em>Error: ${e}</em>`, true);
+            // Stop generation if one panel fails
+            break; 
         }
-      }
     }
-
-    // BONUS FIX: A final check to render any leftover pair after the loop finishes.
-    // This helps ensure the "not complete" issue is fully resolved.
-    if (text && img) {
-        await addSlide(text, img);
-    }
-
-  } catch (e) {
-    console.error('An error occurred during generation:', e);
-    const msg = parseError(e);
-    error.innerHTML = `Something went wrong: ${msg}`;
-    error.removeAttribute('hidden');
-  }
-  userInput.disabled = false;
-  userInput.focus();
+    
+    // Final UI cleanup
+    setStatus('', false);
+    userInput.disabled = false;
+    userInput.focus();
 }
 
-// --- Event Listeners ---
-
+// --- Event Listeners (No Changes) ---
 saveApiKeyButton.addEventListener('click', async () => {
   const apiKey = apiKeyInput.value.trim();
-  if (apiKey) {
-    await initializeGenAI(apiKey);
-  } else {
-    apiError.textContent = 'Please enter an API key.';
-    apiError.removeAttribute('hidden');
-  }
+  if (apiKey) await initializeGenAI(apiKey);
 });
-
 userInput.addEventListener('keydown', async (e: KeyboardEvent) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
-    const message = userInput.value.trim();
-    await generate(message);
+    await generate(userInput.value.trim());
   }
 });
-
-examples.forEach((li) =>
-  li.addEventListener('click', async (e) => {
-    const content = (e.currentTarget as HTMLLIElement).textContent;
-    if (content) {
-      userInput.value = content;
-      await generate(content.trim());
-    }
-  }),
-);
-
-// --- Check for saved key on page load ---
+examples.forEach((li) => li.addEventListener('click', async (e) => {
+  const content = (e.currentTarget as HTMLLIElement).textContent;
+  if (content) {
+    userInput.value = content;
+    await generate(content.trim());
+  }
+}));
 document.addEventListener('DOMContentLoaded', () => {
     const savedKey = localStorage.getItem('gemini_api_key');
-    if (savedKey) {
-        apiKeyInput.value = savedKey; // Pre-fill for user convenience
-        initializeGenAI(savedKey);
-    }
+    if (savedKey) initializeGenAI(savedKey);
 });
