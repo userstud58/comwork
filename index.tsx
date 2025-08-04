@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// IMPORTANT: Note the new 'GenerativeModel' and 'ChatSession' imports
-import {GoogleGenAI, Modality, GenerativeModel, ChatSession} from '@google/genai';
+// Note the simplified imports, going back to what works.
+import {GoogleGenAI, Chat} from '@google/genai';
 import {marked} from 'marked';
 
 // --- DOM Elements ---
@@ -20,22 +20,25 @@ const status = document.querySelector('#status') as HTMLDivElement;
 const error = document.querySelector('#error') as HTMLDivElement;
 
 // --- Globals for AI instances (with corrected types) ---
-let textModel: GenerativeModel | null = null;
-let imageChat: ChatSession | null = null;
+let textChat: Chat | null = null;
+let imageChat: Chat | null = null;
 
 const imageStylePrompt = "Photorealistic, cinematic lighting, sharp focus, high detail, 8k resolution, shot on 35mm film, tasteful, artistic.";
 
-// --- Initialization Logic (THE FIX IS HERE) ---
+// --- Initialization Logic (THE DEFINITIVE FIX IS HERE) ---
 async function initializeGenAI(apiKey: string) {
   try {
     const ai = new GoogleGenAI({apiKey});
 
-    // Correct way to get the text model
-    textModel = ai.getGenerativeModel({ model: 'gemini-1.5-pro-latest' });
+    // Create two separate chat sessions using the proven .chats.create() method.
+    // This is the correct way for this library version.
+    textChat = ai.chats.create({ model: 'gemini-1.5-pro-latest' });
+    imageChat = ai.chats.create({ model: 'gemini-2.0-flash-preview-image-generation' });
 
-    // Correct way to get the image model and start a chat
-    const imageModel = ai.getGenerativeModel({ model: 'gemini-2.0-flash-preview-image-generation' });
-    imageChat = imageModel.startChat();
+    // A quick check to make sure the objects were created.
+    if (!textChat || !imageChat) {
+      throw new Error("Failed to create chat models.");
+    }
 
     localStorage.setItem('gemini_api_key', apiKey);
     apiKeyScreen.setAttribute('hidden', 'true');
@@ -77,44 +80,30 @@ interface ComicScript {
     panels: { text: string }[];
 }
 
-// STEP 1: Use the text model to create a structured script.
+// STEP 1: Use the text CHAT to create a structured script.
 async function generateScript(story: string): Promise<ComicScript | null> {
-    if (!textModel) return null;
+    if (!textChat) return null;
 
     const scriptwriterPrompt = `
-    You are an expert scriptwriter and character designer for a photorealistic graphic novel.
-    Your job is to take a user's story and prepare it for an artist by creating a structured JSON output.
+    You are an expert scriptwriter for a graphic novel. Your job is to take a user's story and prepare it for an artist by creating a structured JSON output.
+    1.  **Create a Character Description:** Read the story and create a single, highly-detailed description of the main character (ethnicity, age, hair, eyes, build, features). This description MUST be used for every image to ensure consistency.
+    2.  **Break Down Story:** Deconstruct the story into short, single-sentence panels for distinct visual moments.
+    3.  **JSON Output:** You MUST output ONLY a single, raw JSON object. Do not include any other text, explanations, or markdown formatting like \`\`\`json. The JSON object must have keys "characterDescription" (string) and "panels" (array of objects with a "text" key).
 
-    CRITICAL INSTRUCTIONS:
-    1.  **Create a Character Description:** Read the entire story. Create a single, consistent, highly-detailed description of the main character. Include specific details like ethnicity, age, hair style/color, eye color, build, and facial features. If the story lacks details, invent plausible ones. This description MUST be used for every image to ensure consistency.
-    2.  **Break Down Story:** Deconstruct the user's story into short, single-sentence panels. Each panel should represent a distinct visual moment.
-    3.  **JSON Output:** You MUST output ONLY a single JSON object. Do not include any other text, explanations, or markdown formatting like \`\`\`json. The JSON object must have two keys: "characterDescription" (a string) and "panels" (an array of objects, where each object has a "text" key).
-
-    EXAMPLE STORY: "A shy office worker named Sam discovers a hidden box of elegant dresses and tries one on for the first time."
-
-    EXAMPLE JSON OUTPUT:
-    {
-      "characterDescription": "Sam is a 25-year-old male of Caucasian descent with messy, short brown hair, blue eyes, a slim build, and a few light freckles across his nose. He has a gentle and slightly nervous expression.",
-      "panels": [
-        { "text": "In a dimly lit office after hours, Sam cautiously opens a dusty, forgotten cardboard box." },
-        { "text": "His eyes widen as he pulls out a cascade of shimmering, soft red silk fabric." },
-        { "text": "Standing nervously in front of a full-length mirror, he slips the elegant red dress over his shoulders." },
-        { "text": "A look of surprised delight crosses his face as he sees his reflection transformed." }
-      ]
-    }
-
-    USER STORY:
-    ${story}
+    USER STORY: "${story}"
     `;
 
     try {
-        const result = await textModel.generateContent({
-            contents: [{role: 'user', parts: [{text: scriptwriterPrompt}]}],
-            generationConfig: { responseMimeType: "application/json" }
-        });
-        const jsonText = result.response.candidates?.[0].content.parts[0].text;
+        // We send a single message and wait for the full response.
+        const result = await textChat.sendMessage(scriptwriterPrompt);
+        const jsonText = await result.response.text();
+        
         if (!jsonText) throw new Error("Text model returned no response.");
-        return JSON.parse(jsonText) as ComicScript;
+
+        // Clean up potential markdown formatting from the response
+        const cleanedJsonText = jsonText.replace(/^```json\n?/, '').replace(/```$/, '');
+        
+        return JSON.parse(cleanedJsonText) as ComicScript;
     } catch(e) {
         console.error("Failed to generate or parse script:", e);
         setError(`<strong>Scriptwriting Failed:</strong> The AI failed to generate a valid story script. This can happen with complex stories. Please try simplifying your prompt. <br><br><em>Error: ${e}</em>`, true);
@@ -124,9 +113,8 @@ async function generateScript(story: string): Promise<ComicScript | null> {
 
 // STEP 2: Loop through the script and generate an image for each panel.
 async function generate(story: string) {
-    if (!textModel || !imageChat || !story.trim()) return;
+    if (!textChat || !imageChat || !story.trim()) return;
 
-    // Reset UI
     userInput.disabled = true;
     modelOutput.innerHTML = '';
     slideshow.innerHTML = '';
@@ -134,7 +122,6 @@ async function generate(story: string) {
     setError('', false);
     setStatus('Writing the script...', true);
     
-    // --- Phase 1: Script Generation ---
     const script = await generateScript(story);
 
     if (!script || !script.panels || script.panels.length === 0) {
@@ -150,7 +137,6 @@ async function generate(story: string) {
     modelOutput.append(userTurn);
     userInput.value = '';
 
-    // --- Phase 2: Panel & Image Generation ---
     let panelCount = 0;
     for (const panel of script.panels) {
         panelCount++;
@@ -159,15 +145,15 @@ async function generate(story: string) {
         const imagePrompt = `${panel.text}\n\n**Character:** ${script.characterDescription}\n\n**Style:** ${imageStylePrompt}`;
         
         try {
+            // Use the dedicated image chat session to send a streaming request.
             const result = await imageChat.sendMessageStream({ message: imagePrompt });
             let text = '';
             let img: HTMLImageElement | null = null;
             
             for await (const chunk of result) {
                 for (const part of chunk.candidates[0].content?.parts ?? []) {
-                    if (part.text) {
-                        text += part.text;
-                    } else if (part.inlineData) {
+                    if (part.text) { text += part.text; } 
+                    else if (part.inlineData) {
                         img = document.createElement('img');
                         img.src = `data:image/png;base64,` + part.inlineData.data;
                     }
@@ -181,12 +167,10 @@ async function generate(story: string) {
         } catch(e) {
             console.error(`Failed to generate panel ${panelCount}:`, e);
             setError(`<strong>Panel ${panelCount} Failed:</strong> Could not generate an image for the text: "${panel.text}" <br><br><em>Error: ${e}</em>`, true);
-            // Stop generation if one panel fails
             break; 
         }
     }
     
-    // Final UI cleanup
     setStatus('', false);
     userInput.disabled = false;
     userInput.focus();
