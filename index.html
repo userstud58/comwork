@@ -6,7 +6,19 @@
     }
   }
 </script>
-<div class="container">
+
+<!-- API Key Entry Screen -->
+<div id="api-key-screen" class="container">
+  <h1>Enter Your Gemini API Key</h1>
+  <p>To use the Comic Creator, please enter your Google AI Gemini API key. Your key will be saved in your browser for future visits.</p>
+  <p>You can get a key from <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a>.</p>
+  <textarea id="api-key-input" placeholder="Paste your API key here"></textarea>
+  <button id="save-api-key-button">Save and Start</button>
+  <div id="api-error" class="error-message" hidden></div>
+</div>
+
+<!-- Main Application Content (hidden initially) -->
+<div id="main-content" class="container" hidden>
   <h1>Crossdressing Comic Creator</h1>
   <p>Examples (Click one to start):</p>
   <ul id="examples">
@@ -20,5 +32,6 @@
   <div id="error" hidden></div>
   <div id="slideshow" hidden></div>
 </div>
+
 <link rel="stylesheet" href="/index.css">
 <script type="module" src="/index.tsx"></script>
