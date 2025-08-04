@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import {GoogleGenAI, Modality, Chat} from '@google/genai';
+// IMPORTANT: Note the new 'GenerativeModel' and 'ChatSession' imports
+import {GoogleGenAI, Modality, GenerativeModel, ChatSession} from '@google/genai';
 import {marked} from 'marked';
 
 // --- DOM Elements ---
@@ -18,20 +19,23 @@ const slideshow = document.querySelector('#slideshow') as HTMLDivElement;
 const status = document.querySelector('#status') as HTMLDivElement;
 const error = document.querySelector('#error') as HTMLDivElement;
 
-// --- Globals for AI instances ---
-let textModel: GoogleGenAI | null = null;
-let imageChat: Chat | null = null;
+// --- Globals for AI instances (with corrected types) ---
+let textModel: GenerativeModel | null = null;
+let imageChat: ChatSession | null = null;
 
 const imageStylePrompt = "Photorealistic, cinematic lighting, sharp focus, high detail, 8k resolution, shot on 35mm film, tasteful, artistic.";
 
-// --- Initialization Logic ---
+// --- Initialization Logic (THE FIX IS HERE) ---
 async function initializeGenAI(apiKey: string) {
   try {
     const ai = new GoogleGenAI({apiKey});
-    // For scriptwriting, we use a powerful text model with a large context window.
-    textModel = ai.models.create({ model: 'gemini-1.5-pro-latest' });
-    // For image generation, we use the specialized chat model.
-    imageChat = ai.chats.create({ model: 'gemini-2.0-flash-preview-image-generation' });
+
+    // Correct way to get the text model
+    textModel = ai.getGenerativeModel({ model: 'gemini-1.5-pro-latest' });
+
+    // Correct way to get the image model and start a chat
+    const imageModel = ai.getGenerativeModel({ model: 'gemini-2.0-flash-preview-image-generation' });
+    imageChat = imageModel.startChat();
 
     localStorage.setItem('gemini_api_key', apiKey);
     apiKeyScreen.setAttribute('hidden', 'true');
