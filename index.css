@@ -47,3 +47,14 @@
   color: #d61c1c;
   font-weight: bold;
 }
+
+/* Add to the end of index.css */
+#status {
+  text-align: center;
+  padding: 15px;
+  margin-top: 10px;
+  background-color: light-dark(#e9ecef, #495057);
+  border-radius: 6px;
+  font-family: 'Space Mono', monospace;
+  font-style: italic;
+}
