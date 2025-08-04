@@ -1,0 +1,24 @@
+<script type="importmap">
+  {
+    "imports": {
+      "@google/genai": "https://esm.sh/@google/genai@^0.7.0",
+      "marked": "https://esm.sh/marked@^15.0.7"
+    }
+  }
+</script>
+<div class="container">
+  <h1>Crossdressing Comic Creator</h1>
+  <p>Examples (Click one to start):</p>
+  <ul id="examples">
+    <li>A shy office worker named Sam discovers a hidden box of elegant dresses and tries one on for the first time.</li>
+    <li>Generate a story about a medieval knight who secretly wears a beautiful gown under their armor.</li>
+    <li>A famous musician unwinds after a show by transforming into their glamorous alter-ego at home.</li>
+  </ul>
+  <p>or write your own story below:</p>
+  <textarea id="input" placeholder="Enter your story here and press Enter. The AI will illustrate it panel by panel."></textarea>
+  <div id="output"></div>
+  <div id="error" hidden></div>
+  <div id="slideshow" hidden></div>
+</div>
+<link rel="stylesheet" href="/index.css">
+<script type="module" src="/index.tsx"></script>
