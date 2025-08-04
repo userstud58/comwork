@@ -35,9 +35,8 @@ You are a master storyteller and comic artist. Your task is to take a user's sto
 
 async function initializeGenAI(apiKey: string) {
   try {
+    // This is the only change: The faulty test line was removed.
     ai = new GoogleGenAI({apiKey});
-    // A quick test to see if the key is valid by listing models
-    await ai.models.list(); 
 
     chat = ai.chats.create({
       model: 'gemini-2.0-flash-preview-image-generation',
