@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// Note the simplified imports, going back to what works.
 import {GoogleGenAI, Chat} from '@google/genai';
 import {marked} from 'marked';
 
@@ -19,23 +18,20 @@ const slideshow = document.querySelector('#slideshow') as HTMLDivElement;
 const status = document.querySelector('#status') as HTMLDivElement;
 const error = document.querySelector('#error') as HTMLDivElement;
 
-// --- Globals for AI instances (with corrected types) ---
+// --- Globals for AI instances ---
 let textChat: Chat | null = null;
 let imageChat: Chat | null = null;
 
 const imageStylePrompt = "Photorealistic, cinematic lighting, sharp focus, high detail, 8k resolution, shot on 35mm film, tasteful, artistic.";
 
-// --- Initialization Logic (THE DEFINITIVE FIX IS HERE) ---
+// --- Initialization Logic ---
 async function initializeGenAI(apiKey: string) {
   try {
     const ai = new GoogleGenAI({apiKey});
 
-    // Create two separate chat sessions using the proven .chats.create() method.
-    // This is the correct way for this library version.
     textChat = ai.chats.create({ model: 'gemini-1.5-pro-latest' });
     imageChat = ai.chats.create({ model: 'gemini-2.0-flash-preview-image-generation' });
 
-    // A quick check to make sure the objects were created.
     if (!textChat || !imageChat) {
       throw new Error("Failed to create chat models.");
     }
@@ -94,14 +90,17 @@ async function generateScript(story: string): Promise<ComicScript | null> {
     `;
 
     try {
-        // We send a single message and wait for the full response.
-        const result = await textChat.sendMessage(scriptwriterPrompt);
+        // THE FIX IS HERE: We now wrap the prompt in the correct object structure.
+        const result = await textChat.sendMessage({
+            parts: [{ text: scriptwriterPrompt }]
+        });
+        
         const jsonText = await result.response.text();
         
         if (!jsonText) throw new Error("Text model returned no response.");
 
         // Clean up potential markdown formatting from the response
-        const cleanedJsonText = jsonText.replace(/^```json\n?/, '').replace(/```$/, '');
+        const cleanedJsonText = jsonText.replace(/^```json\s*/, '').replace(/```$/, '');
         
         return JSON.parse(cleanedJsonText) as ComicScript;
     } catch(e) {
@@ -145,7 +144,6 @@ async function generate(story: string) {
         const imagePrompt = `${panel.text}\n\n**Character:** ${script.characterDescription}\n\n**Style:** ${imageStylePrompt}`;
         
         try {
-            // Use the dedicated image chat session to send a streaming request.
             const result = await imageChat.sendMessageStream({ message: imagePrompt });
             let text = '';
             let img: HTMLImageElement | null = null;
