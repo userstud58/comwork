@@ -90,7 +90,6 @@ async function generateScript(story: string): Promise<ComicScript | null> {
     `;
 
     try {
-        // THE FIX IS HERE: We now wrap the prompt in the correct object structure.
         const result = await textChat.sendMessage({
             parts: [{ text: scriptwriterPrompt }]
         });
@@ -99,7 +98,6 @@ async function generateScript(story: string): Promise<ComicScript | null> {
         
         if (!jsonText) throw new Error("Text model returned no response.");
 
-        // Clean up potential markdown formatting from the response
         const cleanedJsonText = jsonText.replace(/^```json\s*/, '').replace(/```$/, '');
         
         return JSON.parse(cleanedJsonText) as ComicScript;
@@ -144,7 +142,11 @@ async function generate(story: string) {
         const imagePrompt = `${panel.text}\n\n**Character:** ${script.characterDescription}\n\n**Style:** ${imageStylePrompt}`;
         
         try {
-            const result = await imageChat.sendMessageStream({ message: imagePrompt });
+            // THE FINAL FIX IS HERE: The image model call now uses the correct structure.
+            const result = await imageChat.sendMessageStream({
+                parts: [{ text: imagePrompt }]
+            });
+            
             let text = '';
             let img: HTMLImageElement | null = null;
             
