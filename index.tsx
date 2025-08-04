@@ -47,19 +47,27 @@ async function addSlide(text: string, image: HTMLImageElement) {
   slideshow.append(slide);
 }
 
-function parseError(error: string) {
-  const regex = /{"error":(.*)}/gm;
-  const m = regex.exec(error);
-  try {
-    const e = m[1];
-    const err = JSON.parse(e);
-    return err.message;
-  } catch (e) {
-    return error;
-  }
+function parseError(e: any) {
+    // Attempt to parse structured error from the API
+    if (typeof e.message === 'string') {
+        const regex = /{"error":(.*)}/gm;
+        const m = regex.exec(e.message);
+        if (m && m[1]) {
+            try {
+                const err = JSON.parse(m[1]);
+                return err.message || JSON.stringify(err);
+            } catch {
+                // Fallback to original message if JSON parsing fails
+            }
+        }
+    }
+    // Return the string representation of the error
+    return e.toString();
 }
 
+
 async function generate(message: string) {
+  if (!message) return;
   userInput.disabled = true;
 
   chat.history.length = 0;
@@ -80,41 +88,55 @@ async function generate(message: string) {
     });
 
     let text = '';
-    let img = null;
+    let img: HTMLImageElement | null = null;
+
+    console.log('Starting stream...');
 
     for await (const chunk of result) {
       for (const candidate of chunk.candidates) {
-        for (const part of candidate.content.parts ?? []) {
+        if (!candidate.content || !candidate.content.parts) continue;
+
+        for (const part of candidate.content.parts) {
           if (part.text) {
+            console.log('Received text part:', part.text);
             text += part.text;
-          } else {
+          } else if (part.inlineData) {
+            console.log('Received image part.');
             try {
-              const data = part.inlineData;
+              const data = part.inlineData.data;
               if (data) {
                 img = document.createElement('img');
-                img.src = `data:image/png;base64,` + data.data;
-              } else {
-                console.log('no data', chunk);
+                img.src = `data:image/png;base64,` + data;
               }
             } catch (e) {
-              console.log('no data', chunk);
+              console.error('Error processing image data:', e);
             }
           }
+
+          // Check if we have a complete pair to create a slide
           if (text && img) {
+            console.log('Creating slide with text and image.');
             await addSlide(text, img);
             slideshow.removeAttribute('hidden');
+            // Reset for the next pair
             text = '';
             img = null;
           }
         }
       }
     }
-    if (img) {
-      await addSlide(text, img);
-      slideshow.removeAttribute('hidden');
-      text = '';
+
+    // Handle any final pair that might not have been caught in the loop
+    if (text && img) {
+        console.log('Creating final slide with leftover text and image.');
+        await addSlide(text, img);
+        slideshow.removeAttribute('hidden');
     }
+    
+    console.log('Stream finished.');
+
   } catch (e) {
+    console.error('An error occurred during generation:', e);
     const msg = parseError(e);
     error.innerHTML = `Something went wrong: ${msg}`;
     error.removeAttribute('hidden');
@@ -124,9 +146,9 @@ async function generate(message: string) {
 }
 
 userInput.addEventListener('keydown', async (e: KeyboardEvent) => {
-  if (e.code === 'Enter') {
+  if (e.key === 'Enter' && !e.shiftKey) { // Use e.key and check for shift
     e.preventDefault();
-    const message = userInput.value;
+    const message = userInput.value.trim();
     await generate(message);
   }
 });
@@ -134,6 +156,10 @@ userInput.addEventListener('keydown', async (e: KeyboardEvent) => {
 const examples = document.querySelectorAll('#examples li');
 examples.forEach((li) =>
   li.addEventListener('click', async (e) => {
-    await generate(li.textContent);
+    const content = (e.currentTarget as HTMLLIElement).textContent;
+    if (content) {
+        userInput.value = content;
+        await generate(content.trim());
+    }
   }),
 );
