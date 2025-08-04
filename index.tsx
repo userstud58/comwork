@@ -35,7 +35,6 @@ You are a master storyteller and comic artist. Your task is to take a user's sto
 
 async function initializeGenAI(apiKey: string) {
   try {
-    // This is the only change: The faulty test line was removed.
     ai = new GoogleGenAI({apiKey});
 
     chat = ai.chats.create({
@@ -99,7 +98,9 @@ async function generate(message: string) {
 
     for await (const chunk of result) {
       for (const candidate of chunk.candidates) {
-        for (const part of candidate.content.parts ?? []) {
+        // THE FIX IS HERE: We use 'candidate.content?.parts'
+        // The '?.' safely handles cases where 'candidate.content' is undefined.
+        for (const part of candidate.content?.parts ?? []) {
           if (part.text) {
             text += part.text;
           } else if (part.inlineData) {
@@ -115,6 +116,13 @@ async function generate(message: string) {
         }
       }
     }
+
+    // BONUS FIX: A final check to render any leftover pair after the loop finishes.
+    // This helps ensure the "not complete" issue is fully resolved.
+    if (text && img) {
+        await addSlide(text, img);
+    }
+
   } catch (e) {
     console.error('An error occurred during generation:', e);
     const msg = parseError(e);
